@@ -114,16 +114,6 @@ def parse_region(region_str):
 
 
 def parse_vcf_variants(vcf_path, chrom, start, end, bed_mode=False):
-    """
-    Extrai variantes do VCF no intervalo especificado com correções robustas:
-    ✔ compatibilidade chr vs sem chr
-    ✔ BED 0-based → VCF 1-based
-    ✔ contagem real de variantes multialélicas
-    ✔ não descarta variantes sem GT
-    ✔ logs de debug opcionais
-    """
-
-    # Correção BED 0-based
     if bed_mode:
         start += 1
 
@@ -199,10 +189,6 @@ def parse_vcf_variants(vcf_path, chrom, start, end, bed_mode=False):
 
 
 def get_allele(genome, chrom, pos, allele_idx, ref, alts):
-    """
-    Retorna a sequência do alelo para o índice GT fornecido.
-    Retorna None para alelos '*' (spanning deletion).
-    """
     if allele_idx == '.' or allele_idx == '':
         # genótipo missing → usa referência real do genoma
         return genome[chrom][pos-1:pos-1+len(ref)]
@@ -215,10 +201,6 @@ def get_allele(genome, chrom, pos, allele_idx, ref, alts):
         idx = int(allele_idx) - 1
         if 0 <= idx < len(alts):
             allele = alts[idx]
-            # '*' = spanning deletion: esta posição já foi consumida por uma
-            # deleção em variante anterior neste mesmo haplótipo.
-            # Não contribui com nenhuma base; o cursor avança sobre len(ref)
-            # para não duplicar a região, mas nada é inserido na sequência.
             if allele == '*':
                 return None
             return allele
@@ -247,34 +229,22 @@ def build_haplotype_sequence(genome, chrom, start, end, variants, hap_alleles):
         alts = variant['alts']
 
         if var_pos < current_pos:
-            # Posição já consumida por variante anterior (ex: deleção ou spanning *).
-            # Se for um alelo '*', não avançamos o cursor pois a deleção upstream
-            # já cuidou disso. Simplesmente ignoramos a linha.
             continue
 
-        # Preenche com referência entre a posição atual e esta variante
         if var_pos > current_pos:
             result.append(genome[chrom][current_pos-1:var_pos-1])
 
         allele_seq = get_allele(genome, chrom, var_pos, allele_idx, ref, alts)
-        
-        # Adicione isso em build_haplotype_sequence logo após get_allele:
+
         if isinstance(allele_seq, str) and '*' in allele_seq:
             print(f"[DEBUG] * LITERAL detectado! pos={var_pos}, allele_idx={allele_idx}, alts={alts}, allele_seq='{allele_seq}'")
 
         if allele_seq is None:
-            # Alelo '*' (spanning deletion):
-            # A deleção upstream já removeu este trecho — não inserimos nada.
-            # Avançamos o cursor sobre len(ref) desta linha para não duplicar
-            # a posição na próxima iteração.
             current_pos = var_pos + len(ref)
         else:
             result.append(allele_seq)
-            # Para deleções reais (ex: CCCA → C), avança len(ref) para pular
-            # as bases deletadas da referência.
             current_pos = var_pos + len(ref)
 
-    # Adiciona o restante da referência após a última variante
     if current_pos <= end:
         result.append(genome[chrom][current_pos-1:end])
 
@@ -284,7 +254,6 @@ def build_haplotype_sequence(genome, chrom, start, end, variants, hap_alleles):
 def generate_fasta(vcf, genome, region, output, region_idx=None, total_regions=None):
     chrom, start, end = parse_region(region)
 
-    # Exibe progresso no formato (atual/total)
     if region_idx is not None and total_regions is not None:
         log(f"Processando região ({region_idx}/{total_regions}): {region}")
     else:
